@@ -2,9 +2,9 @@
 
 A weekend build for the Z360 Deep Agent Harness challenge: an AI agent that screens a batch of resumes against a job description, scores each candidate against explicit requirements with a traceable rationale, and drafts personalized outreach for the strongest matches.
 
-**Live demo:** `[FILL IN — your Vercel URL]`
-**Demo video:** `[FILL IN — your 3–5 min walkthrough link]`
-**Repository:** `https://github.com/muhammadali015/HireSense-AI`
+**Live demo:** `[https://hire-sense-ai-orcin.vercel.app/]`
+
+
 
 ---
 
