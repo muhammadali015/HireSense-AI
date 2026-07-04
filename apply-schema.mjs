@@ -21,7 +21,7 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
 // Test by checking if jobs table exists
-const { data: existsCheck, error: checkErr } = await supabase.from('jobs').select('id').limit(1);
+const { error: checkErr } = await supabase.from('jobs').select('id').limit(1);
 
 if (!checkErr) {
   console.log('✅ jobs table already exists — schema already applied.');

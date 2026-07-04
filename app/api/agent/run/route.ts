@@ -79,31 +79,51 @@ export async function POST(req: NextRequest) {
 
       sseChunk(ctrl, 'status', { message: 'Extracting job requirements…' });
       let requirements: Requirement[] = [];
+      let requirementsFallback = false;
       try {
-        requirements = await extractRequirements(jobDescription);
+        const extraction = await extractRequirements(jobDescription);
+        requirements = extraction.requirements;
+        requirementsFallback = extraction.usedFallback;
         await supabaseAdmin.from('jobs').update({ requirements }).eq('id', jobId);
       } catch (e) {
+        requirementsFallback = true;
         sseChunk(ctrl, 'warn', { message: 'Could not extract requirements, continuing', detail: String(e) });
       }
 
       const todos = resumeTexts.map((r, i) => ({ resume: i + 1, name: r.name, status: 'pending' }));
       await updateTodos(todos);
 
+      let runFailed = false;
+      let runDegraded = false;
       try {
         const agentGraph = createAgentGraph((event: string, data: Record<string, unknown>) => sseChunk(ctrl, event, data));
-        await agentGraph.invoke({
+        const graphResult = await agentGraph.invoke({
           jobId,
           runId,
           requirements,
+          requirementsFallback,
           resumeTexts,
           todos,
         });
+        runDegraded = Boolean((graphResult as { hadErrors?: boolean }).hadErrors);
+
+        if (!runDegraded) {
+          const { data: currentRun } = await supabaseAdmin.from('agent_runs').select('status').eq('id', runId).single();
+          if (currentRun?.status === 'degraded') {
+            runDegraded = true;
+          }
+        }
       } catch (err) {
+        runFailed = true;
         console.error("Graph execution error:", err);
+        await supabaseAdmin.from('agent_runs').update({ status: 'failed' }).eq('id', runId);
+        sseChunk(ctrl, 'error', { message: 'Run failed', detail: String(err) });
       }
 
-      await supabaseAdmin.from('agent_runs').update({ status: 'complete' }).eq('id', runId);
-      sseChunk(ctrl, 'done', { jobId, runId });
+      if (!runFailed) {
+        await supabaseAdmin.from('agent_runs').update({ status: runDegraded ? 'degraded' : 'complete' }).eq('id', runId);
+        sseChunk(ctrl, 'done', { jobId, runId });
+      }
       ctrl.close();
     },
   });

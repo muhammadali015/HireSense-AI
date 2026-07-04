@@ -59,11 +59,6 @@ const ParseAndScoreSchema = z.object({
 
 const RequirementsSchema = z.array(RequirementSchema);
 
-const OutreachSchema = z.object({
-  subject: z.string(),
-  body: z.string(),
-});
-
 export interface Requirement {
   id: string;
   description: string;
@@ -92,6 +87,7 @@ export interface CandidateScore {
   rationale: string;
   signals: Array<{ type: string; detail: string }>;
   flagged_for_review: boolean;
+  used_fallback?: boolean;
   [key: string]: unknown;
 }
 
@@ -118,8 +114,11 @@ export async function invokeModel<T = string>(
   while (true) {
     attempt += 1;
     try {
-      const llm = schema ? geminiModel.withStructuredOutput(schema) : geminiModel;
-      const response = await (llm as any).invoke([
+      const llm = schema
+        ? geminiModel.withStructuredOutput(schema)
+        : geminiModel;
+      const invokable = llm as { invoke(messages: unknown[]): Promise<unknown> };
+      const response = await invokable.invoke([
         new SystemMessage(systemPrompt),
         new HumanMessage(userMessage),
       ]);
@@ -131,8 +130,8 @@ export async function invokeModel<T = string>(
 
       const content = typeof response === 'string'
         ? response
-        : typeof response?.content === 'string'
-          ? response.content
+        : typeof response === 'object' && response !== null && 'content' in response && typeof (response as { content: unknown }).content === 'string'
+          ? (response as { content: string }).content
           : JSON.stringify(response);
       console.log(`[${label}] model call succeeded on attempt ${attempt}`);
       return content as unknown as T;
@@ -169,13 +168,18 @@ function buildFallbackRequirements(jdText: string) {
   return requirements;
 }
 
-export const extractRequirements = async (jdText: string): Promise<Requirement[]> => {
+export const extractRequirements = async (jdText: string): Promise<{ requirements: Requirement[]; usedFallback: boolean }> => {
+  if (jdText.includes('FORCE_REQUIREMENTS_FALLBACK')) {
+    throw new Error('Simulated requirements extraction failure');
+  }
+
   const system = "You are an extraction assistant. Given a job description, return ONLY a JSON array of objects with fields: id, description, tier ('must_have'|'nice_to_have'). No markdown, no explanation, just the JSON array.";
   try {
-    return await invokeModel<Requirement[]>(system, jdText, 5, 'extractRequirements', RequirementsSchema);
+    const requirements = await invokeModel<Requirement[]>(system, jdText, 5, 'extractRequirements', RequirementsSchema);
+    return { requirements, usedFallback: false };
   } catch (e) {
     console.warn('[extractRequirements] falling back to deterministic extraction:', e);
-    return buildFallbackRequirements(jdText);
+    return { requirements: buildFallbackRequirements(jdText), usedFallback: true };
   }
 };
 
@@ -203,6 +207,7 @@ function buildFallbackProfile(resumeText: string) {
     years_experience: yearsExperience,
     education: null,
     work_history: resumeText,
+    used_fallback: true,
   };
 }
 
@@ -225,7 +230,7 @@ export const parseAndScoreResume = async (resumeText: string, requirements: Requ
   } catch (e) {
     console.warn('[parseAndScoreResume] falling back to deterministic scoring:', e);
     const profile = buildFallbackProfile(resumeText);
-    const score = buildFallbackScore(profile, requirements);
+    const score = { ...buildFallbackScore(profile, requirements), used_fallback: true };
     return { profile, score };
   }
 };
@@ -258,6 +263,7 @@ function buildFallbackScore(profile: CandidateProfile, requirements: Requirement
     rationale: 'Fallback scoring used because the AI provider quota was exhausted. The score is based on keyword overlap against the extracted requirements.',
     signals: [{ type: 'fallback', detail: 'Used deterministic fallback scoring because the Gemini quota was unavailable.' }],
     flagged_for_review,
+    used_fallback: true,
   };
 }
 
@@ -278,6 +284,7 @@ export const scoreCandidate = async (profile: CandidateProfile, requirements: Re
       rationale: parsed.rationale,
       signals: parsed.signals,
       flagged_for_review: parsed.flagged_for_review ?? false,
+      used_fallback: parsed.used_fallback ?? profile.used_fallback ?? false,
     });
     return parsed;
   } catch (error) {
@@ -292,6 +299,7 @@ export const scoreCandidate = async (profile: CandidateProfile, requirements: Re
       rationale: fallback.rationale,
       signals: fallback.signals,
       flagged_for_review: fallback.flagged_for_review,
+      used_fallback: true,
     });
     return fallback;
   }
@@ -336,6 +344,9 @@ export const draftOutreachEmail = async (
     console.warn('[draftOutreachEmail] falling back to deterministic outreach draft:', error);
     const fallback = buildFallbackOutreach(profile, standouts, gaps);
     await supabaseAdmin.from("outreach").insert({ candidate_id: profile.candidateId, subject: fallback.subject, body: fallback.body });
+    if (profile.candidateId) {
+      await supabaseAdmin.from("scores").update({ used_fallback: true }).eq("candidate_id", profile.candidateId);
+    }
     return fallback;
   }
 };

@@ -2,8 +2,9 @@
 // app/jobs/[jobId]/pipeline/PipelineClient.tsx
 // Client component: sortable pipeline table + candidate detail sheet.
 import React, { useState, useTransition } from 'react';
+import { OUTREACH_THRESHOLD } from '@/lib/constants';
 
-const THRESHOLD = 50;
+const THRESHOLD = OUTREACH_THRESHOLD;
 
 interface MetItem { requirement_id: string; evidence: string; }
 interface GapItem { requirement_id: string; note: string; }
@@ -21,11 +22,12 @@ interface CandidateRow {
   gaps: GapItem[];
   standouts: StandoutItem[];
   flagged: boolean;
+  used_fallback?: boolean;
   outreach: OutreachRow | null;
 }
 
 const STAGE_STYLE: Record<string, string> = {
-  new: 'text-gray-400 border-gray-700 bg-gray-800/50',
+  new: 'text-slate-400 border-slate-700 bg-slate-800/50',
   scored: 'text-cyan-400 border-cyan-800 bg-cyan-950/50',
   outreach_sent: 'text-green-400 border-green-800 bg-green-950/50',
   responded: 'text-purple-400 border-purple-800 bg-purple-950/50',
@@ -93,7 +95,7 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
       }
 
       setChatLog(prev => [...prev, { role: 'assistant', text: assistantText || 'No response' }]);
-    } catch (err) {
+    } catch {
       setChatLog(prev => [...prev, { role: 'assistant', text: 'Error communicating with AI' }]);
     } finally {
       setChatLoading(false);
@@ -127,8 +129,8 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
   return (
     <>
       {/* Score threshold banner */}
-      <div className="flex items-center gap-3 text-xs text-gray-500 font-mono">
-        <span className="text-yellow-500">⊙ Score threshold: {THRESHOLD}/100</span>
+      <div className="flex flex-wrap items-center gap-3 text-xs hud-subtle font-mono">
+        <span className="hud-chip hud-chip-warning text-sm">⊙ Score threshold: {THRESHOLD}/100</span>
         <span>—</span>
         <span>{rows.filter(r => r.score >= THRESHOLD).length} above threshold</span>
         <span>·</span>
@@ -136,123 +138,128 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
       </div>
 
       {/* Table */}
-      <div className="border border-gray-800 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-800 bg-gray-950">
-              <th className="text-left px-4 py-3 text-xs text-gray-500 uppercase tracking-widest font-semibold w-8">#</th>
-              <th className="text-left px-4 py-3 text-xs text-gray-500 uppercase tracking-widest font-semibold">Candidate</th>
-              <th className="text-left px-4 py-3 text-xs text-gray-500 uppercase tracking-widest font-semibold">Stage</th>
-              <th
-                className="text-left px-4 py-3 text-xs text-gray-500 uppercase tracking-widest font-semibold cursor-pointer hover:text-cyan-400 transition-colors select-none"
-                onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-              >
-                Score {sortDir === 'desc' ? '↓' : '↑'}
-              </th>
-              <th className="text-left px-4 py-3 text-xs text-gray-500 uppercase tracking-widest font-semibold">Gaps</th>
-              <th className="text-left px-4 py-3 text-xs text-gray-500 uppercase tracking-widest font-semibold">Standouts</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((row, i) => (
-              <tr
-                key={row.candidateId}
-                className="border-b border-gray-800/50 hover:bg-gray-900 cursor-pointer transition-colors"
-                onClick={() => openSheet(row)}
-              >
-                <td className="px-4 py-3 text-gray-600 font-mono text-xs">{i + 1}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-white font-medium">{row.name}</span>
-                    {row.flagged && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 border border-yellow-700/50 text-yellow-400 font-bold">⚑</span>
-                    )}
-                    {row.score >= THRESHOLD && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-800/50 text-cyan-500">above threshold</span>
-                    )}
-                  </div>
-                  {row.email && <p className="text-xs text-gray-600 mt-0.5">{row.email}</p>}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`text-[11px] px-2 py-0.5 rounded border font-semibold ${STAGE_STYLE[row.stage] || STAGE_STYLE.new}`}>
-                    {row.stage}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`font-mono font-bold text-base ${
-                    row.score >= 70 ? 'text-cyan-400' : row.score >= THRESHOLD ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {row.score}
-                  </span>
-                  <span className="text-gray-600 text-xs">/100</span>
-                </td>
-                <td className="px-4 py-3 max-w-xs">
-                  <div className="flex flex-wrap gap-1">
-                    {row.gaps.slice(0, 3).map((g, gi) => (
-                      <span key={gi} className="text-[10px] px-1.5 py-0.5 rounded bg-red-950/50 border border-red-900/50 text-red-400">
-                        ✗ {formatRequirementLabel(g.requirement_id)}
-                      </span>
-                    ))}
-                    {row.gaps.length > 3 && (
-                      <span className="text-[10px] text-gray-600">+{row.gaps.length - 3}</span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-3 max-w-xs">
-                  <div className="flex flex-wrap gap-1">
-                    {row.standouts.slice(0, 2).map((st, si) => (
-                      <span key={si} className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/50 border border-cyan-900/50 text-cyan-400">
-                        ★ {st.item}
-                      </span>
-                    ))}
-                    {row.standouts.length > 2 && (
-                      <span className="text-[10px] text-gray-600">+{row.standouts.length - 2}</span>
-                    )}
-                  </div>
-                </td>
+      <div className="hud-panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-cyan-500/10 bg-slate-950/90">
+                <th className="text-left px-4 py-4 text-xs hud-subtle uppercase tracking-widest font-semibold w-8">#</th>
+                <th className="text-left px-4 py-4 text-xs hud-subtle uppercase tracking-widest font-semibold">Candidate</th>
+                <th className="text-left px-4 py-4 text-xs hud-subtle uppercase tracking-widest font-semibold">Stage</th>
+                <th
+                  className="text-left px-4 py-4 text-xs hud-subtle uppercase tracking-widest font-semibold cursor-pointer hover:text-cyan-300 transition-colors select-none"
+                  onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+                >
+                  Score {sortDir === 'desc' ? '↓' : '↑'}
+                </th>
+                <th className="text-left px-4 py-4 text-xs hud-subtle uppercase tracking-widest font-semibold">Gaps</th>
+                <th className="text-left px-4 py-4 text-xs hud-subtle uppercase tracking-widest font-semibold">Standouts</th>
               </tr>
-            ))}
-            {sorted.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-gray-600 text-sm">No candidates scored yet.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sorted.map((row, i) => (
+                <tr
+                  key={row.candidateId}
+                  className="border-b border-cyan-500/10 hover:bg-slate-950/70 cursor-pointer transition-colors"
+                  onClick={() => openSheet(row)}
+                >
+                  <td className="px-4 py-4 text-slate-400 font-mono text-xs">{i + 1}</td>
+                  <td className="px-4 py-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="hud-heading font-semibold">{row.name}</span>
+                        {row.flagged && (
+                          <span className="hud-chip hud-chip-warning text-[10px] px-2 py-0.5 rounded-full">⚑</span>
+                        )}
+                        {row.used_fallback && (
+                          <span className="hud-chip hud-chip-muted text-[10px] px-2 py-0.5 rounded-full">Estimated</span>
+                        )}
+                        {row.score >= THRESHOLD && (
+                          <span className="hud-chip hud-chip-accent text-[10px] px-2 py-0.5 rounded-full">Above threshold</span>
+                        )}
+                      </div>
+                      {row.email && <p className="text-xs hud-subtle">{row.email}</p>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-4">
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full border font-semibold ${STAGE_STYLE[row.stage] || STAGE_STYLE.new}`}>
+                      {row.stage}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4">
+                    <div className="flex items-baseline gap-2">
+                      <span className={`font-mono font-bold text-base ${row.score >= THRESHOLD ? 'text-cyan-300' : 'text-red-400'}`}>
+                        {row.score}
+                      </span>
+                      <span className="text-xs hud-subtle">/100</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 max-w-xs">
+                    <div className="flex flex-wrap gap-2">
+                      {row.gaps.slice(0, 3).map((g, gi) => (
+                        <span key={gi} className="hud-chip hud-chip-warning text-[10px] rounded-md">
+                          ✗ {formatRequirementLabel(g.requirement_id)}
+                        </span>
+                      ))}
+                      {row.gaps.length > 3 && (
+                        <span className="text-[10px] hud-subtle">+{row.gaps.length - 3}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 max-w-xs">
+                    <div className="flex flex-wrap gap-2">
+                      {row.standouts.slice(0, 2).map((st, si) => (
+                        <span key={si} className="hud-chip hud-chip-accent text-[10px] rounded-md">
+                          ★ {st.item}
+                        </span>
+                      ))}
+                      {row.standouts.length > 2 && (
+                        <span className="text-[10px] hud-subtle">+{row.standouts.length - 2}</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center hud-subtle text-sm">No candidates scored yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Candidate Detail Sheet/Dialog — Item 3 */}
       {selected && (
         <div className="fixed inset-0 z-50 flex" onClick={() => setSelected(null)}>
           {/* Overlay */}
-          <div className="flex-1 bg-black/70 backdrop-blur-sm" />
+          <div className="flex-1 bg-slate-950/80 backdrop-blur-sm" />
           {/* Panel */}
           <div
-            className="w-full max-w-2xl bg-gray-950 border-l border-cyan-900/40 overflow-y-auto flex flex-col"
+            className="w-full max-w-2xl hud-panel hud-panel-strong overflow-y-auto flex flex-col"
             onClick={e => e.stopPropagation()}
           >
             {/* Sheet header */}
-            <div className="sticky top-0 bg-gray-950 border-b border-gray-800 px-6 py-4 flex items-start justify-between z-10">
+            <div className="sticky top-0 hud-panel-strong border-b border-cyan-500/10 px-6 py-4 flex items-start justify-between z-10">
               <div>
-                <h2 className="text-xl font-bold text-white">{selected.name}</h2>
-                {selected.email && <p className="text-xs text-gray-500 mt-0.5">{selected.email}</p>}
-                <div className="flex items-center gap-2 mt-2">
-                  <span className={`text-[11px] px-2 py-0.5 rounded border font-semibold ${STAGE_STYLE[selected.stage] || STAGE_STYLE.new}`}>
+                <h2 className="text-xl font-bold hud-heading">{selected.name}</h2>
+                {selected.email && <p className="text-xs hud-subtle mt-0.5">{selected.email}</p>}
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full border font-semibold ${STAGE_STYLE[selected.stage] || STAGE_STYLE.new}`}>
                     {selected.stage}
                   </span>
-                  <span className={`font-mono font-bold text-lg ${
-                    selected.score >= 70 ? 'text-cyan-400' : selected.score >= THRESHOLD ? 'text-green-400' : 'text-red-400'
-                  }`}>
+                  <span className={`font-mono font-bold text-lg ${selected.score >= THRESHOLD ? 'text-cyan-300' : 'text-red-400'}`}>
                     {selected.score}/100
                   </span>
                   {selected.flagged && (
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-yellow-500/15 border border-yellow-700/50 text-yellow-400 font-bold">⚑ Flagged for Review</span>
+                    <span className="hud-chip hud-chip-warning text-[10px] rounded-full">⚑ Flagged for Review</span>
                   )}
                 </div>
               </div>
               <button
                 onClick={() => setSelected(null)}
-                className="text-gray-500 hover:text-white text-2xl leading-none transition-colors mt-1"
+                className="text-slate-400 hover:text-white text-2xl leading-none transition-colors mt-1"
                 aria-label="Close"
               >
                 ×
@@ -263,20 +270,20 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
               {/* Rationale */}
               {selected.rationale && (
                 <div>
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">Rationale</h3>
-                  <p className="text-sm text-gray-300 leading-relaxed">{selected.rationale}</p>
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Rationale</h3>
+                  <p className="text-sm text-slate-300 leading-relaxed">{selected.rationale}</p>
                 </div>
               )}
 
               {/* Standouts */}
               {selected.standouts.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-cyan-500 uppercase tracking-widest mb-2">★ Standouts</h3>
+                  <h3 className="text-xs font-semibold text-cyan-400 uppercase tracking-widest mb-2">★ Standouts</h3>
                   <ul className="space-y-2">
                     {selected.standouts.map((st, i) => (
                       <li key={i} className="rounded-lg bg-cyan-950/30 border border-cyan-900/40 px-3 py-2">
                         <p className="text-sm font-semibold text-cyan-300">{st.item}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{st.why_it_matters}</p>
+                        <p className="text-xs text-slate-400 mt-0.5">{st.why_it_matters}</p>
                       </li>
                     ))}
                   </ul>
@@ -286,12 +293,12 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
               {/* Met Requirements with Evidence */}
               {selected.met.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-green-500 uppercase tracking-widest mb-2">✓ Met Requirements</h3>
+                  <h3 className="text-xs font-semibold text-green-400 uppercase tracking-widest mb-2">✓ Met Requirements</h3>
                   <ul className="space-y-2">
                     {selected.met.map((m, i) => (
                       <li key={i} className="rounded-lg bg-green-950/20 border border-green-900/30 px-3 py-2">
-                        <p className="text-[11px] font-mono text-green-500 mb-0.5">{m.requirement_id}</p>
-                        <p className="text-xs text-gray-300">{m.evidence}</p>
+                        <p className="text-[11px] font-mono text-green-400 mb-0.5">{m.requirement_id}</p>
+                        <p className="text-xs text-slate-300">{m.evidence}</p>
                       </li>
                     ))}
                   </ul>
@@ -301,12 +308,12 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
               {/* Gaps */}
               {selected.gaps.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-red-500 uppercase tracking-widest mb-2">✗ Gaps</h3>
+                  <h3 className="text-xs font-semibold text-red-400 uppercase tracking-widest mb-2">✗ Gaps</h3>
                   <ul className="space-y-2">
                     {selected.gaps.map((g, i) => (
                       <li key={i} className="rounded-lg bg-red-950/20 border border-red-900/30 px-3 py-2">
-                        <p className="text-[11px] font-mono text-red-500 mb-0.5">{g.requirement_id}</p>
-                        <p className="text-xs text-gray-300">{g.note}</p>
+                        <p className="text-[11px] font-mono text-red-400 mb-0.5">{g.requirement_id}</p>
+                        <p className="text-xs text-slate-300">{g.note}</p>
                       </li>
                     ))}
                   </ul>
@@ -315,15 +322,15 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
 
               {/* Outreach Draft — Item 4 */}
               <div>
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">Outreach Draft</h3>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Outreach Draft</h3>
                 {selected.outreach ? (
-                  <div className="space-y-2">
-                    <div className="rounded-lg bg-gray-900 border border-gray-700 px-3 py-2">
-                      <p className="text-xs text-gray-500 mb-0.5">Subject</p>
-                      <p className="text-sm text-white">{selected.outreach.subject}</p>
+                  <div className="space-y-3">
+                    <div className="rounded-lg bg-slate-950 border border-cyan-500/10 px-3 py-2">
+                      <p className="text-xs hud-subtle mb-0.5">Subject</p>
+                      <p className="text-sm hud-heading">{selected.outreach.subject}</p>
                     </div>
                     <textarea
-                      className="w-full rounded-lg bg-gray-900 border border-gray-700 text-sm text-gray-200 px-3 py-2 resize-none focus:outline-none focus:border-cyan-600 transition-colors min-h-[160px]"
+                      className="w-full rounded-2xl bg-slate-950 border border-cyan-500/10 text-sm text-slate-100 px-4 py-3 resize-none focus:outline-none focus:border-cyan-400 transition-colors min-h-[160px]"
                       value={outreachBody}
                       onChange={e => setOutreachBody(e.target.value)}
                       placeholder="Edit outreach email body…"
@@ -331,7 +338,7 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
                     <button
                       onClick={markAsSent}
                       disabled={marking || isSent}
-                      className={`w-full py-2 rounded-lg text-sm font-semibold transition-all ${
+                      className={`w-full py-3 rounded-2xl text-sm font-semibold transition-all ${
                         isSent
                           ? 'bg-green-900/40 border border-green-700 text-green-400 cursor-default'
                           : 'bg-cyan-600 hover:bg-cyan-500 text-black font-bold'
@@ -341,7 +348,7 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
                     </button>
                   </div>
                 ) : (
-                  <p className="text-xs text-gray-600 bg-gray-900/50 border border-gray-800 rounded-lg px-3 py-3">
+                  <p className="text-xs hud-subtle bg-slate-950/60 border border-slate-800 rounded-2xl px-3 py-3">
                     No outreach draft generated for this candidate. This is expected if Gemini failed to produce the email or the score was below threshold.
                   </p>
                 )}
@@ -352,18 +359,18 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
       )}
 
       {/* Recruiter Assistant Chat Panel */}
-      <div className="mt-12 border border-gray-800 rounded-xl overflow-hidden bg-gray-950 flex flex-col h-96 max-h-[50vh]">
-        <div className="px-4 py-3 border-b border-gray-800 bg-black flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-cyan-400">Recruiter Assistant AI</h3>
-          <span className="text-xs text-gray-500 font-mono">Powered by Gemini</span>
+      <div className="mt-12 hud-panel rounded-2xl overflow-hidden flex flex-col h-96 max-h-[50vh]">
+        <div className="px-4 py-3 border-b border-cyan-500/10 bg-slate-950 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-cyan-300">Recruiter Assistant AI</h3>
+          <span className="text-xs hud-subtle font-mono">Powered by Gemini</span>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {chatLog.length === 0 ? (
-            <p className="text-xs text-gray-600 italic">Ask me anything about this candidate batch... (e.g., "Why did Faisal score lower than Ali?")</p>
+            <p className="text-xs hud-subtle italic">Ask me anything about this candidate batch... (e.g., &quot;Why did Faisal score lower than Ali?&quot;)</p>
           ) : (
             chatLog.map((msg, i) => (
               <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] rounded-xl px-4 py-3 text-sm ${msg.role === 'user' ? 'bg-cyan-900/40 text-cyan-50 border border-cyan-800' : 'bg-gray-800/50 text-gray-200 border border-gray-700'}`}>
+                <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm ${msg.role === 'user' ? 'bg-cyan-900/40 text-cyan-50 border border-cyan-800' : 'bg-slate-950/70 text-slate-100 border border-slate-800'}`}>
                   {msg.text}
                 </div>
               </div>
@@ -371,7 +378,7 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
           )}
           {chatLoading && (
             <div className="flex justify-start">
-              <div className="max-w-[80%] rounded-xl px-4 py-3 text-sm bg-gray-800/50 text-gray-400 border border-gray-700 flex items-center gap-2">
+              <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-slate-950/70 text-slate-400 border border-slate-800 flex items-center gap-2">
                 <span className="animate-pulse">●</span>
                 <span className="animate-pulse delay-75">●</span>
                 <span className="animate-pulse delay-150">●</span>
@@ -379,10 +386,10 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
             </div>
           )}
         </div>
-        <form onSubmit={askChat} className="p-3 border-t border-gray-800 bg-black flex gap-2">
+        <form onSubmit={askChat} className="p-3 border-t border-cyan-500/10 bg-slate-950 flex gap-2">
           <input
             type="text"
-            className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors"
+            className="flex-1 bg-slate-950 border border-cyan-500/10 rounded-2xl px-4 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-400 transition-colors"
             placeholder="Ask a question about the batch..."
             value={chatInput}
             onChange={e => setChatInput(e.target.value)}
@@ -391,7 +398,7 @@ export default function PipelineClient({ rows, jobId }: { rows: CandidateRow[]; 
           <button
             type="submit"
             disabled={chatLoading || !chatInput.trim()}
-            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold rounded-lg text-sm transition-colors disabled:opacity-50"
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold rounded-2xl text-sm transition-colors disabled:opacity-50"
           >
             Send
           </button>

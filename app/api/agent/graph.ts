@@ -1,5 +1,6 @@
 import { StateGraph, START, END, Annotation } from "@langchain/langgraph";
 import { supabaseAdmin } from "../../../supabase/client";
+import { OUTREACH_THRESHOLD } from "@/lib/constants";
 import { parseAndScoreResume, draftOutreachEmail, Requirement } from "./tools";
 
 type EmitEvent = (event: string, data: Record<string, unknown>) => void;
@@ -117,7 +118,7 @@ export function createAgentGraph(emitEvent: EmitEvent = () => {}) {
         const candidateId: string = candidateRow.id;
         profile.candidateId = candidateId;
 
-        await supabaseAdmin.from('scores').insert({
+        const { data: scoreRow, error: scoreErr } = await supabaseAdmin.from('scores').insert({
           candidate_id: candidateId,
           score: scoreData.score,
           met: scoreData.met,
@@ -126,11 +127,17 @@ export function createAgentGraph(emitEvent: EmitEvent = () => {}) {
           rationale: scoreData.rationale,
           signals: scoreData.signals,
           flagged_for_review: scoreData.flagged_for_review ?? false,
-        });
+          used_fallback: scoreData.used_fallback ?? state.requirementsFallback ?? false,
+        }).select('id').single();
+
+        if (scoreErr || !scoreRow) {
+          console.error('Score insert failed for candidate', { candidateId, error: scoreErr?.message });
+          throw new Error(scoreErr?.message ?? 'Score insert failed');
+        }
 
         emitEvent('score', { candidateId, score: scoreData.score, name: profile.name ?? resumeName });
 
-        if (scoreData.score >= 70) {
+        if (scoreData.score >= OUTREACH_THRESHOLD) {
           await writerNode({ profile, scoreData, name: resumeName, resumeIndex: idx, runId: state.runId });
         } else {
           await updateTodoStatus(state.runId, idx, 'done', emitEvent);
@@ -138,6 +145,7 @@ export function createAgentGraph(emitEvent: EmitEvent = () => {}) {
       } catch (err) {
         console.error(`\n=== ERROR PROCESSING RESUME ${resumeName} ===\n`, err, '\n=======================================\n');
         await updateTodoStatus(state.runId, idx, 'error', emitEvent);
+        state.hadErrors = true;
         emitEvent('resumeError', { resume: idx + 1, name: resumeName, detail: String(err) });
       }
 
@@ -174,6 +182,11 @@ export function createAgentGraph(emitEvent: EmitEvent = () => {}) {
     requirements: Annotation<Requirement[]>(),
     resumeTexts: Annotation<ResumeText[]>(),
     todos: Annotation<BatchTodo[]>(),
+    requirementsFallback: Annotation<boolean>(),
+    hadErrors: Annotation<boolean>({
+      reducer: (a: boolean | undefined, b: boolean | undefined) => Boolean(a || b),
+      default: () => false,
+    }),
     completed: Annotation<number>({
       reducer: (a: number, b: number) => (a ?? 0) + (b ?? 0),
       default: () => 0,

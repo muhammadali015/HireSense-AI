@@ -27,6 +27,7 @@ create table scores (
   rationale text,
   signals jsonb,     -- [{type:string, detail:string}]
   flagged_for_review boolean default false,
+  used_fallback boolean default false,
   created_at timestamptz default now()
 );
 

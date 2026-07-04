@@ -14,7 +14,8 @@ export async function POST(req: NextRequest) {
 
   let requirements: Requirement[] = [];
   try {
-    requirements = await extractRequirements(jobDescription);
+    const extraction = await extractRequirements(jobDescription);
+    requirements = extraction.requirements;
   } catch {
     // Fall back to empty requirements — scoring will still run with empty list
   }
